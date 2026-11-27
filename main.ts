@@ -2,10 +2,48 @@
 // Deterministic: no network, no arguments, no randomness.
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
-// Where the entry goes. The gate reads /output/entry.txt; ENTRY_OUTPUT_DIR
-// exists only so the program can be tested without touching shared /output.
-const OUTPUT_DIR = process.env.ENTRY_OUTPUT_DIR ?? "/output";
-const OUTPUT_FILE = `${OUTPUT_DIR}/entry.txt`;
+// Where the entry goes. The grader reads $MAKEFUN_OUTPUT_DIR/entry.txt;
+// ENTRY_OUTPUT_DIR exists only so the program can be tested without touching
+// shared /output, and "/output" is the last-resort fallback.
+function resolveOutputDir(): string {
+  return process.env.MAKEFUN_OUTPUT_DIR ?? process.env.ENTRY_OUTPUT_DIR ?? "/output";
+}
+
+function writeEntry(dir: string): string {
+  const file = `${dir}/entry.txt`;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(file, ENTRY, "utf8");
+
+  // Read back as raw bytes: the file must equal the entry exactly.
+  const expected = Buffer.from(ENTRY, "utf8");
+  const actual = readFileSync(file);
+  if (statSync(file).size !== expected.length || !actual.equals(expected)) {
+    throw new Error("read-back mismatch: file differs from entry");
+  }
+  // Second validation pass on the written content itself.
+  validateEntry(actual.toString("utf8"));
+  return file;
+}
+
+function selfTest(): void {
+  // The entry must be exactly 77 chars / 77 bytes, one line, no newline.
+  validateEntry(ENTRY);
+  const chars = [...ENTRY].length;
+  const bytes = Buffer.byteLength(ENTRY, "utf8");
+  if (chars !== 77 || bytes !== 77) {
+    throw new Error(`self-test: entry is ${chars} chars / ${bytes} bytes, expected 77 / 77`);
+  }
+  // Round-trip: write to a scratch dir and verify byte-identical.
+  const scratch = "/tmp/coral-selftest-scratch";
+  const file = writeEntry(scratch);
+  const written = readFileSync(file);
+  if (!written.equals(Buffer.from(ENTRY, "utf8"))) {
+    throw new Error("self-test: scratch round-trip mismatch");
+  }
+  console.log(
+    `self-test: OK — entry is exactly "${ENTRY}" (77 chars, no trailing newline), output-dir round-trip byte-identical`,
+  );
+}
 
 // The joke: impatient button-mashing, answered by the elevator itself —
 // the machine reads the human's impatience as a mental-health event and
@@ -47,19 +85,15 @@ function validateEntry(text: string): void {
 }
 
 function main(): void {
-  validateEntry(ENTRY);
-  mkdirSync(OUTPUT_DIR, { recursive: true });
-  writeFileSync(OUTPUT_FILE, ENTRY, "utf8");
-
-  // Read back as raw bytes: the file must equal the entry exactly.
-  const expected = Buffer.from(ENTRY, "utf8");
-  const actual = readFileSync(OUTPUT_FILE);
-  if (statSync(OUTPUT_FILE).size !== expected.length || !actual.equals(expected)) {
-    throw new Error("read-back mismatch: file differs from entry");
+  if (process.argv.includes("--self-test")) {
+    selfTest();
+    return;
   }
-  // Second validation pass on the written content itself.
-  validateEntry(actual.toString("utf8"));
-  console.log(`ok: ${[...ENTRY].length} chars, ${expected.length} bytes written to ${OUTPUT_FILE}`);
+  validateEntry(ENTRY);
+  const file = writeEntry(resolveOutputDir());
+  console.log(
+    `ok: ${[...ENTRY].length} chars, ${Buffer.byteLength(ENTRY, "utf8")} bytes written to ${file}`,
+  );
 }
 
 main();
